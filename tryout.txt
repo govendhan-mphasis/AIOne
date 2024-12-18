@@ -1,0 +1,92 @@
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
+from urllib.parse import quote_plus
+from sentence_transformers import SentenceTransformer
+
+# Step 1: Connection to MongoDB Atlas
+username = "selvaonchange"
+password = "EyAeik2LpJxYLHAc"
+encoded_password = quote_plus(password)
+
+# Connection string with `tlsAllowInvalidCertificates=true`
+uri = f"mongodb+srv://{username}:{encoded_password}@cluster0.fq3kf.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&tlsAllowInvalidCertificates=true"
+
+# Create a new client and connect to the server
+client = MongoClient(uri, server_api=ServerApi('1'))
+
+try:
+    client.admin.command('ping')
+    print("Pinged your deployment. You successfully connected to MongoDB!")
+except Exception as e:
+    print("Error connecting to MongoDB:", e)
+
+# Step 2: Connect to the database and collection
+db = client["movies"]
+collection = db["movie_collection_2"]
+
+# Step 3: Load the embedding model
+embedding_model = SentenceTransformer("thenlper/gte-large")
+print("Embedding model loaded successfully!")
+
+# Step 4: Define vector search function
+def vector_search(query, collection):
+    """
+    Perform a vector search in the MongoDB collection based on the user query.
+
+    Args:
+        query (str): The user's query string.
+        collection: The MongoDB collection to search.
+
+    Returns:
+        list: A list of matching documents.
+    """
+    # Generate embedding for the query
+    query_embedding = embedding_model.encode(query).tolist()
+    print("Generated Query Embedding:", query_embedding[:10], "...")  # Display first 10 values of the embedding
+
+    # Define the aggregation pipeline for vector search
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": "vector_index",  # Must match the index name created in MongoDB Atlas
+                "queryVector": query_embedding,
+                "path": "embedding",
+                "numCandidates": 5,  # Adjust number of candidates if needed
+                "limit": 5  # Limit results to top 5 matches
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,  # Exclude the `_id` field
+                "title": 1,  # Include the title field
+                "fullplot": 1,  # Include the full plot field
+                "genres": 1,  # Include the genres field
+                "score": {"$meta": "vectorSearchScore"}  # Include the search score
+            }
+        }
+    ]
+
+    # Execute the search
+    try:
+        results = list(collection.aggregate(pipeline))
+        print("Raw Results from MongoDB:", results)
+        return results
+    except Exception as e:
+        print("Error during vector search:", e)
+        return []
+
+# Step 5: Perform the search
+query = "A story about adventure and treasure hunting"
+results = vector_search(query, collection)
+
+# Step 6: Display the results
+print(f"\nResults for query: '{query}'")
+if results:
+    for idx, result in enumerate(results, start=1):
+        print(f"\nResult {idx}:")
+        print(f"Title: {result.get('title', 'N/A')}")
+        print(f"Full Plot: {result.get('fullplot', 'N/A')}")
+        print(f"Genres: {result.get('genres', 'N/A')}")
+        print(f"Score: {result.get('score', 'N/A')}")
+else:
+    print("No results found for the query.")
